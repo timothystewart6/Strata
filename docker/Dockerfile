@@ -67,6 +67,7 @@ FROM ${BASE_IMAGE}
 ARG FLAVOR=cuda
 ARG STRATA_VERSION=dev
 ARG ENGINE_LABEL=
+ARG HAS_VULKAN_READER=0
 ENV DEBIAN_FRONTEND=noninteractive
 
 # system libraries the engine packages leave to the OS (SYSTEM-LIBS.txt), plus tini (PID 1: forwards docker stop, reaps children)
@@ -78,15 +79,18 @@ RUN set -e; \
       sycl) pkgs="$pkgs libze1 libze-intel-gpu1 intel-opencl-icd" ;; \
       *) echo "FLAVOR must be cuda, hip or sycl"; exit 1 ;; \
     esac; \
+    if [ "$HAS_VULKAN_READER" = "1" ]; then pkgs="$pkgs libvulkan1 mesa-vulkan-drivers"; fi; \
     apt-get update; apt-get install -y --no-install-recommends $pkgs; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
 COPY --from=terminal /opt/strata/terminal /opt/strata/terminal
 COPY --from=terminal /opt/strata/seed /opt/strata/seed
 COPY --from=verify /engine/ /opt/strata/components/engine/
+COPY vision/ /opt/strata/vision/
 COPY docker/entrypoint.sh docker/healthcheck.sh /opt/strata/
 COPY docker/strata-wrapper.sh /usr/local/bin/strata
-RUN chmod 0755 /opt/strata/entrypoint.sh /opt/strata/healthcheck.sh /usr/local/bin/strata
+RUN chmod 0755 /opt/strata/entrypoint.sh /opt/strata/healthcheck.sh /usr/local/bin/strata \
+ && if [ -f /opt/strata/vision/strata-vision-vulkan ]; then chmod 0755 /opt/strata/vision/strata-vision-vulkan; fi
 
 # Does the dynamic linker find every library of the package inside this image? (the GPU driver's libcuda / libnvidia-* come from the host)
 RUN set -e; \
@@ -97,7 +101,12 @@ RUN set -e; \
              done | sort -u); \
       if [ -n "$miss" ]; then echo "MISSING LIBRARIES in $d"; echo "$miss"; exit 1; fi; \
       echo "libraries of $d resolve inside this image"; \
-    done
+    done; \
+    if [ -f /opt/strata/vision/strata-vision-vulkan ]; then \
+      miss=$(ldd /opt/strata/vision/strata-vision-vulkan 2>/dev/null | grep 'not found' || true); \
+      if [ -n "$miss" ]; then echo "MISSING LIBRARIES for Vulkan reader"; echo "$miss"; exit 1; fi; \
+      echo "Vulkan reader libraries resolve inside this image"; \
+    fi
 
 # Everything that is yours lives in /data: model files, the prepared pack, presets, tuning results, the API key, logs.
 # The engine and the Terminal are in the image; updating the image never touches /data.

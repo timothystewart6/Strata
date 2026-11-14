@@ -106,6 +106,8 @@ int main(int argc, char** argv) {
             std::printf("strata-vision metal\n");
 #elif defined(STRATA_VISION_SYCL)
             std::printf("strata-vision sycl (Intel GPU)\n");
+#elif defined(STRATA_VISION_VULKAN)
+            std::printf("strata-vision vulkan (GPU)\n");
 #else
             std::printf("strata-vision\n");
 #endif
@@ -141,9 +143,11 @@ int main(int argc, char** argv) {
     llama_log_set(quiet_log, nullptr);
     mtmd_helper_log_set(quiet_log, nullptr);
     llama_backend_init();
-#if defined(STRATA_VISION_HIP) || defined(STRATA_VISION_SYCL)
+#if defined(STRATA_VISION_HIP) || defined(STRATA_VISION_SYCL) || defined(STRATA_VISION_VULKAN)
 #ifdef STRATA_VISION_SYCL
 #define STRATA_VISION_BUILT_FOR "Intel GPUs"
+#elif defined(STRATA_VISION_VULKAN)
+#define STRATA_VISION_BUILT_FOR "Vulkan GPUs"
 #else
 #define STRATA_VISION_BUILT_FOR STRATA_VISION_HIP_ARCHS
 #endif

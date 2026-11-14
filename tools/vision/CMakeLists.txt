@@ -18,9 +18,13 @@ set(LLAMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/llama.cpp" CACHE PA
 option(STRATA_VISION_CUDA "run the vision encoder on the GPU (builds ggml-cuda)" OFF)
 option(STRATA_VISION_HIP "run the vision encoder on an AMD GPU (builds ggml-hip); the program is named strata-vision-hip" OFF)
 option(STRATA_VISION_SYCL "run the vision encoder on an Intel GPU (builds ggml-sycl, needs the oneAPI icx/icpx compilers); the program is named strata-vision-sycl" OFF)
+option(STRATA_VISION_VULKAN "run the vision encoder on a Vulkan GPU; the program is named strata-vision-vulkan" OFF)
 set(STRATA_VISION_HIP_ARCHS "" CACHE STRING "the gfx architectures strata-vision-hip is compiled for (';'-separated)")
 if(STRATA_VISION_HIP AND STRATA_VISION_CUDA)
   message(FATAL_ERROR "strata-vision: STRATA_VISION_CUDA and STRATA_VISION_HIP are two different programs")
+endif()
+if(STRATA_VISION_VULKAN AND (STRATA_VISION_CUDA OR STRATA_VISION_HIP OR STRATA_VISION_SYCL))
+  message(FATAL_ERROR "strata-vision: STRATA_VISION_VULKAN is its own program")
 endif()
 if(STRATA_VISION_SYCL AND (STRATA_VISION_CUDA OR STRATA_VISION_HIP))
   message(FATAL_ERROR "strata-vision: STRATA_VISION_SYCL is its own program: not together with CUDA or HIP")
@@ -68,6 +72,7 @@ endif()
 set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
 set(GGML_CUDA ${STRATA_VISION_CUDA} CACHE BOOL "" FORCE)
 set(GGML_HIP ${STRATA_VISION_HIP} CACHE BOOL "" FORCE)
+set(GGML_VULKAN ${STRATA_VISION_VULKAN} CACHE BOOL "" FORCE)
 if(APPLE)
   # One program for both readers: strata-vision --gpu runs the encoder on the Metal GPU, without --gpu on the CPU (Apple Silicon always
   # has the Metal framework, the engine needs it too).  The Metal shaders are embedded in the binary and compiled by macOS when the
@@ -90,7 +95,6 @@ if(STRATA_VISION_HIP)
   # cmake/hip_backend.cmake).  Only for the HIP reader: the other readers' builds stay as they were.
   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
-
 add_subdirectory(${LLAMA_DIR} llama EXCLUDE_FROM_ALL)
 
 add_executable(strata-vision strata_vision.cpp)
@@ -100,6 +104,10 @@ endif()
 target_link_libraries(strata-vision PRIVATE mtmd llama)
 target_compile_features(strata-vision PRIVATE cxx_std_17)
 set_target_properties(strata-vision PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+if(STRATA_VISION_VULKAN)
+  set_target_properties(strata-vision PROPERTIES OUTPUT_NAME strata-vision-vulkan)
+  target_compile_definitions(strata-vision PRIVATE STRATA_VISION_VULKAN)
+endif()
 if(STRATA_VISION_HIP)
   # beside strata (and, in a component, the CPU reader "strata-vision"): the GPU reader is its own program, so a PC where
   # the HIP runtime does not load still has the CPU one to fall back on

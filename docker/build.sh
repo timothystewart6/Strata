@@ -25,11 +25,13 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 repo=$(CDPATH= cd -- "$here/.." && pwd -P)
 flavor=""; tag=""; base=""; version=""; ctx=""; nocache=""; ctxonly=""
 engines=""
+vision_vulkan=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --flavor) flavor=$2; shift 2 ;;
     --engine) engines="$engines
 $2"; shift 2 ;;
+    --vision-vulkan) vision_vulkan=$2; shift 2 ;;
     --tag) tag=$2; shift 2 ;;
     --base) base=$2; shift 2 ;;
     --repo) repo=$(CDPATH= cd -- "$2" && pwd -P); shift 2 ;;
@@ -52,7 +54,7 @@ fi
 
 own_ctx=""
 if [ -z "$ctx" ]; then ctx=$(mktemp -d "${TMPDIR:-/tmp}/strata-docker-ctx.XXXXXX"); own_ctx=1; fi
-mkdir -p "$ctx/terminal-src" "$ctx/engine" "$ctx/docker"
+mkdir -p "$ctx/terminal-src" "$ctx/engine" "$ctx/docker" "$ctx/vision"
 cleanup() { if [ -n "$own_ctx" ] && [ -z "$ctxonly" ]; then rm -rf "$ctx"; fi; }
 trap cleanup EXIT
 
@@ -94,6 +96,10 @@ done
 # 3. the Dockerfile and the container scripts
 cp "$here/Dockerfile" "$ctx/Dockerfile"
 cp "$here/entrypoint.sh" "$here/strata-wrapper.sh" "$here/healthcheck.sh" "$ctx/docker/"
+if [ -n "$vision_vulkan" ]; then
+  [ -x "$vision_vulkan" ] || { echo "build.sh: Vulkan reader is missing or not executable: $vision_vulkan" >&2; exit 2; }
+  cp "$vision_vulkan" "$ctx/vision/strata-vision-vulkan"
+fi
 tr -d '\r' < "$here/entrypoint.sh" > "$ctx/docker/entrypoint.sh"          # a checkout with CRLF line ends must not break the scripts
 tr -d '\r' < "$here/strata-wrapper.sh" > "$ctx/docker/strata-wrapper.sh"
 tr -d '\r' < "$here/healthcheck.sh" > "$ctx/docker/healthcheck.sh"
@@ -108,6 +114,7 @@ echo "flavor $flavor, base $base, engine(s): $engine_label, tag $tag"
 docker build $nocache ${STRATA_DOCKER_BUILD_OPTS:-} \
   --build-arg "BASE_IMAGE=$base" --build-arg "FLAVOR=$flavor" \
   --build-arg "STRATA_COMMIT=$commit" --build-arg "STRATA_VERSION=$version" --build-arg "ENGINE_LABEL=$engine_label" \
+  --build-arg "HAS_VULKAN_READER=$([ -n "$vision_vulkan" ] && echo 1 || echo 0)" \
   -t "$tag" "$ctx"
 docker image inspect "$tag" --format 'built {{.RepoTags}} {{.Size}} bytes'
 echo "Not pushed anywhere. Size on disk: $(docker image inspect "$tag" --format '{{.Size}}') bytes."
