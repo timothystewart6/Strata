@@ -2,7 +2,7 @@ FROM ubuntu@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcec
 ARG LLAMA_CPP_COMMIT=3cf03257f219afbe7334045ff7c6a06ac68c627d
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential ca-certificates cmake git glslang-tools glslc libvulkan-dev ninja-build python3 unzip wget \
+      build-essential ca-certificates cmake git glslang-tools glslc libvulkan-dev ninja-build python3 spirv-headers unzip wget \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . /src/
