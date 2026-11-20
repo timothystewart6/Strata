@@ -5,6 +5,7 @@
 #   docker/build.sh --flavor cuda --engine ~/pkgs/0.1.45.3-linux-x86_64-cuda-cuda13 --tag strata:0.2.7-cuda13
 #   docker/build.sh --flavor hip  --engine ~/pkgs/0.1.45.3-linux-x86_64-hip-gfx120X  --tag strata:0.2.7-rocm-gfx120x
 #   docker/build.sh --flavor sycl --engine ~/pkgs/0.1.45.3-linux-x86_64-sycl         --tag strata:0.2.7-sycl
+#   docker/build.sh --flavor cuda --engine ~/pkgs/0.1.62-linux-x86_64-cuda-cuda13 --vision-vulkan ./strata-vision-vulkan --tag strata:0.2.16-cuda13
 #
 # --engine is the package FOLDER that packaging/package_engine.py wrote (engine-component.json inside). It can be given more than
 # once to put several packages in one image (the Terminal picks the one that fits the card).
@@ -13,6 +14,7 @@
 #   --tag NAME               image name (default strata:<version>-<flavor>)
 #   --base IMAGE             base image (default ubuntu:24.04; sycl: ubuntu:26.04)
 #   --repo DIR               the Strata source tree (default: the one this script is in)
+#   --vision-vulkan PATH     optional Intel Vulkan reader to include in the runtime image
 #   --version V              label (default: read from CMakeLists.txt)
 #   --ctx DIR                keep the build context here (default: a temporary folder, removed after the build)
 #   --no-cache               docker build --no-cache
@@ -21,18 +23,20 @@
 # Nothing is pushed anywhere; the image stays in the local Docker.
 set -eu
 
-here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-repo=$(CDPATH= cd -- "$here/../.." && pwd -P)
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+repo=$(CDPATH='' cd -- "$here/../.." && pwd -P)
 flavor=""; tag=""; base=""; version=""; ctx=""; nocache=""; ctxonly=""
 engines=""
+vision_vulkan=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --flavor) flavor=$2; shift 2 ;;
     --engine) engines="$engines
 $2"; shift 2 ;;
+    --vision-vulkan) vision_vulkan=$2; shift 2 ;;
     --tag) tag=$2; shift 2 ;;
     --base) base=$2; shift 2 ;;
-    --repo) repo=$(CDPATH= cd -- "$2" && pwd -P); shift 2 ;;
+    --repo) repo=$(CDPATH='' cd -- "$2" && pwd -P); shift 2 ;;
     --version) version=$2; shift 2 ;;
     --ctx) ctx=$2; shift 2 ;;
     --no-cache) nocache=--no-cache; shift ;;
@@ -41,6 +45,13 @@ $2"; shift 2 ;;
     *) echo "build.sh: unknown option $1" >&2; exit 2 ;;
   esac
 done
+# Paths are resolved from the caller's working directory before the script changes into the source tree.
+if [ -n "$vision_vulkan" ]; then
+  case "$vision_vulkan" in
+    /*) ;;
+    *) vision_vulkan="$(pwd -P)/$vision_vulkan" ;;
+  esac
+fi
 [ -n "$flavor" ] || { echo "build.sh: --flavor cuda|hip|sycl is required" >&2; exit 2; }
 case "$flavor" in cuda|hip|sycl) ;; *) echo "build.sh: --flavor must be cuda, hip or sycl" >&2; exit 2 ;; esac
 [ -n "$engines" ] || { echo "build.sh: --engine <package folder> is required" >&2; exit 2; }
@@ -52,7 +63,8 @@ fi
 
 own_ctx=""
 if [ -z "$ctx" ]; then ctx=$(mktemp -d "${TMPDIR:-/tmp}/strata-docker-ctx.XXXXXX"); own_ctx=1; fi
-mkdir -p "$ctx/terminal-src" "$ctx/engine" "$ctx/docker"
+mkdir -p "$ctx/terminal-src" "$ctx/engine" "$ctx/docker" "$ctx/vision"
+: > "$ctx/vision/.keep"
 cleanup() { if [ -n "$own_ctx" ] && [ -z "$ctxonly" ]; then rm -rf "$ctx"; fi; }
 trap cleanup EXIT
 
@@ -96,6 +108,12 @@ done
 # 3. the Dockerfile and the container scripts
 cp "$here/Dockerfile" "$ctx/Dockerfile"
 cp "$here/entrypoint.sh" "$here/strata-wrapper.sh" "$here/healthcheck.sh" "$ctx/docker/"
+has_vulkan_reader=0
+if [ -n "$vision_vulkan" ]; then
+  [ -x "$vision_vulkan" ] || { echo "build.sh: Vulkan reader is missing or not executable: $vision_vulkan" >&2; exit 2; }
+  cp "$vision_vulkan" "$ctx/vision/strata-vision-vulkan"
+  has_vulkan_reader=1
+fi
 tr -d '\r' < "$here/entrypoint.sh" > "$ctx/docker/entrypoint.sh"          # a checkout with CRLF line ends must not break the scripts
 tr -d '\r' < "$here/strata-wrapper.sh" > "$ctx/docker/strata-wrapper.sh"
 tr -d '\r' < "$here/healthcheck.sh" > "$ctx/docker/healthcheck.sh"
@@ -110,6 +128,7 @@ echo "flavor $flavor, base $base, engine(s): $engine_label, tag $tag"
 docker build $nocache ${STRATA_DOCKER_BUILD_OPTS:-} \
   --build-arg "BASE_IMAGE=$base" --build-arg "FLAVOR=$flavor" \
   --build-arg "STRATA_COMMIT=$commit" --build-arg "STRATA_VERSION=$version" --build-arg "ENGINE_LABEL=$engine_label" \
+  --build-arg "HAS_VULKAN_READER=$has_vulkan_reader" \
   -t "$tag" "$ctx"
 docker image inspect "$tag" --format 'built {{.RepoTags}} {{.Size}} bytes'
 echo "Not pushed anywhere. Size on disk: $(docker image inspect "$tag" --format '{{.Size}}') bytes."
