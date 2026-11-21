@@ -68,6 +68,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # system libraries the engine packages leave to the OS (SYSTEM-LIBS.txt), plus tini (PID 1: forwards docker stop, reaps children)
 RUN set -e; \
     pkgs="tini ca-certificates libgomp1 libatomic1 libnuma1 zlib1g"; \
+    if [ "$HAS_VULKAN_READER" = 1 ]; then pkgs="$pkgs libvulkan1"; fi; \
     case "$FLAVOR" in \
       cuda) ;; \
       hip)  pkgs="$pkgs libdrm2 libdrm-amdgpu1 libelf1t64 libtinfo6 libpci3" ;; \
