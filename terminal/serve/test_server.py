@@ -99,6 +99,33 @@ class MaxTokens(unittest.TestCase):
         self.assertEqual(s2, 200)
         self.assertEqual(b["input_tokens"], n_in)
 
+    def test_openai_tokenize_returns_provider_shape_for_text(self):
+        s, b = self.post("/tokenize", {"model": "m", "prompt": "provider token check"})
+        self.assertEqual(s, 200, b)
+        self.assertEqual(b["count"], len(b["tokens"]))
+        self.assertEqual(b["count"], len("provider token check"))
+        self.assertEqual(b["max_model_len"], CTX)
+        self.assertIsNone(b["token_strs"])
+
+    def test_openai_tokenize_matches_forced_tool_chat_prompt(self):
+        body = {
+            "model": "m",
+            "messages": [{"role": "user", "content": "look up the weather"}],
+            "tools": [{"type": "function", "function": {
+                "name": "weather", "description": "Get weather",
+                "parameters": {"type": "object", "properties": {}},
+            }}],
+            "tool_choice": {"type": "function", "function": {"name": "weather"}},
+            "chat_template_kwargs": {"enable_thinking": False},
+            "max_tokens": 8,
+        }
+        status, counted = self.post("/tokenize", body)
+        self.assertEqual(status, 200, counted)
+        self.assertEqual(counted["count"], len(counted["tokens"]))
+        status, generated = self.post("/v1/chat/completions", body)
+        self.assertEqual(status, 200, generated)
+        self.assertEqual(counted["count"], generated["usage"]["prompt_tokens"])
+
     def test_request_line_parses_the_engine_summary(self):
         line = ("strata serve: prompt 1200 tokens = 1000 reused + 200 read in 50 ms (4000.0 tok/s), 30 generated in "
                 "300 ms (100.0 tok/s), drafts accepted 20 of 28, 2 checkpoints")

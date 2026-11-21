@@ -10,6 +10,7 @@
 # Plain `docker build` also works when the context folder has this layout (build.sh makes it):
 #     terminal-src/   the files package_terminal.py needs (packaging/, strata_cli/, strata_control/, serve/, tools/, data/, ...)
 #     engine/         one folder per engine package, exactly as `package_engine.py` wrote it (engine-component.json inside)
+#     vision/         empty, or the optional strata-vision-vulkan binary
 #     docker/         entrypoint.sh, strata-wrapper.sh, healthcheck.sh
 #   docker build --build-arg FLAVOR=cuda -t strata:0.2.7-cuda13 -f Dockerfile <context>
 #
@@ -61,6 +62,7 @@ FROM ${BASE_IMAGE}
 ARG FLAVOR=cuda
 ARG STRATA_VERSION=dev
 ARG ENGINE_LABEL=
+ARG HAS_VULKAN_READER=0
 ENV DEBIAN_FRONTEND=noninteractive
 
 # system libraries the engine packages leave to the OS (SYSTEM-LIBS.txt), plus tini (PID 1: forwards docker stop, reaps children)
@@ -77,9 +79,11 @@ RUN set -e; \
 
 COPY --from=terminal /opt/strata/terminal /opt/strata/terminal
 COPY --from=verify /engine/ /opt/strata/components/engine/
+COPY vision/ /opt/strata/vision/
 COPY docker/entrypoint.sh docker/healthcheck.sh /opt/strata/
 COPY docker/strata-wrapper.sh /usr/local/bin/strata
-RUN chmod 0755 /opt/strata/entrypoint.sh /opt/strata/healthcheck.sh /usr/local/bin/strata
+RUN chmod 0755 /opt/strata/entrypoint.sh /opt/strata/healthcheck.sh /usr/local/bin/strata \
+ && if [ "$HAS_VULKAN_READER" = 1 ]; then test -x /opt/strata/vision/strata-vision-vulkan; fi
 
 # Does the dynamic linker find every library of the package inside this image? (the GPU driver's libcuda / libnvidia-* come from the host)
 RUN set -e; \

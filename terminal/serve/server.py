@@ -4956,6 +4956,43 @@ class Service:
         return self.tok.encode(prompt, parse_special=True, plain=plain) if plain else \
             self.tok.encode(prompt, parse_special=True)
 
+    def expand_image_tokens_for_count(self, images, ids):
+        """Count the image tokens a generation request would read without preparing engine embeddings."""
+        if not images:
+            return ids
+        if self.offline and any(src.startswith(("http://", "https://")) for src in images):
+            raise ValueError("offline mode cannot download an image URL; send a data: image instead")
+        if self.vision is None:
+            raise ValueError("this server was started without the vision encoder (run setup again and choose "
+                             "'vision'), so it cannot read images")
+        # A remote fetch can be slow, so do it before taking the engine turn. The image reader runs on the same
+        # device as generation and must not encode while the engine is using it.
+        sources = [Vision.download(src) if src.startswith(("http://", "https://")) else src for src in images]
+        pad = self.tok.encode(IMAGE_PAD, parse_special=True)[0]
+        start = self.tok.encode(VISION_START, parse_special=True)[0]
+        with self._turn():
+            if not self.vision.all_cached(sources):
+                self._vision_up()
+            try:
+                encoded = self.vision.encode_all(sources)
+            finally:
+                self.last_image_at = time.time()
+        literal = self.tok.encode(IMAGE_PAD, parse_special=False)
+        out, k = [], 0
+        for j, token in enumerate(ids):
+            if token == pad and j > 0 and ids[j - 1] == start:
+                if k == len(encoded):
+                    raise ValueError("the prompt and its images do not match")
+                out.extend([pad] * encoded[k][1])
+                k += 1
+            elif token == pad:
+                out.extend(literal)
+            else:
+                out.append(token)
+        if k != len(encoded):
+            raise ValueError("the prompt and its images do not match")
+        return out
+
     @contextlib.contextmanager
     def _turn(self, cancel=None):
         """The engine's single turn (self.fifo) for an image encode.  #1999: a client that leaves while this request
@@ -7158,6 +7195,8 @@ def make_handler(svc: Service):
                     self._json(code, body)
                 elif path == "/v1/chat/completions":
                     self._openai(req)
+                elif path == "/tokenize":
+                    self._tokenize(req)
                 elif path == "/v1/messages":
                     self._anthropic(req)
                 elif path == "/v1/messages/count_tokens":
@@ -7807,6 +7846,34 @@ def make_handler(svc: Service):
             stop_strings(req)                                 # the same 400 as the request itself would get
             check_request_sampling(req)                       # ... likewise a sampling field of the wrong type
             self._json(200, {"input_tokens": len(svc.encode_prompt(messages, tools, kw, store=False))})
+
+        def _tokenize(self, req):
+            """Return the exact OpenAI-style prompt token IDs this server would read, without generating a reply."""
+            if bool("prompt" in req) == bool("messages" in req):
+                raise ValueError("send a 'prompt' (plain text) or a chat 'messages' conversation - not both, not neither")
+            if req.get("continue_final_message"):
+                raise ValueError("continue_final_message is not supported")
+            if "prompt" in req:
+                prompt = req["prompt"]
+                if not isinstance(prompt, str):
+                    raise ValueError("prompt: a text")
+                ids = svc.tok.encode(prompt, parse_special=True)
+            else:
+                req = svc.with_shared(req, "openai")
+                messages, tools, kw = openai_to_messages(req)
+                require_messages(messages)
+                self._no_local_images(messages)
+                if tool_choice_of(req.get("tool_choice"))[0] == "none":
+                    tools = None
+                force = svc.force_text(forced_call(req.get("tool_choice"), tools))
+                messages, _ = prepare_format(req.get("response_format"), messages, with_tools=bool(tools))
+                kw["add_generation_prompt"] = bool(req.get("add_generation_prompt", True))
+                ids = svc.encode_prompt(messages, tools, kw, store=False)
+                if force and kw.get("enable_thinking", True) is False:
+                    ids += svc.tok.encode(force, parse_special=True)
+                ids = svc.expand_image_tokens_for_count(images_of(messages), ids)
+            self._json(200, {"count": len(ids), "tokens": ids,
+                             "max_model_len": svc.reported_ctx(), "token_strs": None})
 
         def _anthropic(self, req):
             svc.load()
